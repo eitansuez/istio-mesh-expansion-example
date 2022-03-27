@@ -1,0 +1,256 @@
+2022.03.27
+
+# Add VM to istio mesh in the context of the BookInfo App
+
+This document is a recipe illustrating Istio mesh expansion using a single network and a a single cluster.
+
+We install Istio and deploy the all BookInfo services to the mesh, with the exception of the ratings service, which will run separately on a VM.
+
+The idea is to make this work, and thereby to demonstrate that Istio supports a mesh where some services run in-cluster and some outside it.
+
+## Create K8s Cluster
+
+```shell
+./scripts/make-gke-cluster
+```
+
+Wait until cluster is ready.
+
+## Create the VM
+
+```shell
+gcloud compute instances create my-mesh-vm --tags=mesh-vm \
+  --machine-type=n1-standard-2 \
+  --network=default --subnet=default \
+  --image-project=ubuntu-os-cloud \
+  --image=ubuntu-2110-impish-v20220309
+```
+
+## Install ratings app on the VM
+
+Wait for the machine to be ready.
+
+1. Copy over the ratings app
+
+    ```shell
+    gcloud compute scp -r bookinfo/ratings ubuntu@my-mesh-vm:ratings
+    ```
+
+1. ssh onto the VM
+
+    ```shell
+    gcloud compute ssh ubuntu@my-mesh-vm
+    ```
+
+1. Install nodejs, the ratings app and start it, test it.
+
+    ```shell
+    sudo apt-get install node
+    ```
+
+1. Install dependencies
+
+    ```shell
+    cd ratings/
+    npm install
+    ```
+
+1. Test the app.
+
+    Post a rating.
+
+    ```shell
+    curl -X POST http://localhost:9080/ratings/123 \
+      -H 'Content-Type: application/json' \
+      -d '5'
+    ```
+
+    Retrieve it.
+
+    ```shell
+    curl http://localhost:9080/ratings/123
+    ```
+
+### Allow POD-to-VM traffic on port 9080
+
+```shell
+CLUSTER_POD_CIDR=$(gcloud container clusters describe my-istio-cluster --format=json | jq -r '.clusterIpv4Cidr')
+
+gcloud compute firewall-rules create "cluster-pods-to-vm" \
+  --source-ranges=$CLUSTER_POD_CIDR \
+  --target-tags=mesh-vm \
+  --action=allow \
+  --rules=tcp:9080
+```
+
+## Install Istio
+
+```shell
+istioctl install --set values.pilot.env.PILOT_ENABLE_WORKLOAD_ENTRY_AUTOREGISTRATION=true --set values.pilot.env.PILOT_ENABLE_WORKLOAD_ENTRY_HEALTHCHECKS=true
+```
+
+## Deploy BookInfo (sans ratings)
+
+1. Turn on sidecar-injection.
+
+    ```shell
+    k label ns default istio-injection=enabled
+    ```
+
+1. Deploy the reviews service.
+
+    ```shell
+    k apply -f bookinfo/bookinfo-reviews.yaml
+    ```
+
+    Important: the reviews service uses an environment variable named SERVICES_DOMAIN that we use to adjust the ratings app target url to reflect the fact that it resides in a different namespace.
+
+1. Deploy the remaining servies.
+
+    ```shell
+    k apply -f bookinfo/bookinfo-rest.yaml
+    ```
+
+## Install East-west Gateway and expose Istiod
+
+Control plane traffic between the VM and istiod goes through this gateway.
+
+See [the istio documentation](https://istio.io/latest/docs/ops/deployment/vm-architecture/) for a more complete explanation.
+
+```shell
+./scripts/gen-eastwest-gateway.sh --single-cluster | istioctl install -y -f -
+```
+
+```shell
+k apply -n istio-system -f ./expose-istiod.yaml
+```
+
+## Create the ratings namespace and service account
+
+The ratings service running on the VM will map to the ratings namespace in kubernetes.
+
+```shell
+k create namespace ratings
+k create serviceaccount bookinfo-ratings -n ratings
+```
+
+## Create the WorkloadGroup
+
+A WorkloadGroup is a template for WorkloadEntity objects, see the [Istio reference](https://istio.io/latest/docs/reference/config/networking/workload-group/).
+
+```shell
+istioctl x workload group create \
+  --name "ratings" \
+  --namespace "ratings" \
+  --labels app="ratings" \
+  --serviceAccount "bookinfo-ratings" > workloadgroup.yaml
+```
+
+Apply the workloadgroup:
+
+```shell
+k apply -f workloadgroup.yaml -n ratings
+```
+
+## Generate VM artifacts
+
+```shell
+istioctl x workload entry configure -f workloadgroup.yaml -o vm_files --autoregister
+```
+
+Note: check that `vm_files/hosts` is not blank. If it is, it means you ran the command too soon.  Re-run it.
+
+## VM configuration recipe
+
+Copy the generated artifacts to the VM.
+
+```shell
+gcloud compute scp vm_files/* ubuntu@my-mesh-vm:
+```
+
+Ssh onto the VM
+
+```shell
+gcloud compute ssh ubuntu@my-mesh-vm
+```
+
+And, on the VM, run the following commands.
+
+```
+sudo mkdir -p /etc/certs
+sudo cp ~/root-cert.pem /etc/certs/root-cert.pem
+sudo  mkdir -p /var/run/secrets/tokens
+sudo cp ~/istio-token /var/run/secrets/tokens/istio-token
+curl -LO https://storage.googleapis.com/istio-release/releases/1.13.2/deb/istio-sidecar.deb
+sudo dpkg -i istio-sidecar.deb
+sudo cp ~/cluster.env /var/lib/istio/envoy/cluster.env
+sudo cp ~/mesh.yaml /etc/istio/config/mesh
+sudo sh -c 'cat $(eval echo ~$SUDO_USER)/hosts >> /etc/hosts'
+sudo mkdir -p /etc/istio/proxy
+sudo chown -R istio-proxy /etc/certs /var/run/secrets /var/lib/istio /etc/istio/config /etc/istio/proxy
+```
+
+## Exercise 1
+
+Watch the workload entry get created as a consequence of the VM registering with the mesh
+
+```shell
+k get workloadentry -n ratings -w
+```
+
+On the VM:
+
+```shell
+sudo systemctl start istio
+```
+
+Notice the workload entry show up in the listing.  This can take up to a minute.
+
+
+## Exercise 2
+
+Although the ratings services does not need to call back into the mesh, we can manually test communication from the VM into the mesh.
+
+```shell
+curl details.default.svc:9080/details
+```
+
+## Exercise 3
+
+Test communication from a pod to the ratinsg service running on the VM.
+
+Create a ClusterIP service to front the application:
+
+```shell
+k apply -n ratings -f bookinfo/bookinfo-ratings.yaml
+```
+
+Create a temporary client pod in the default namespace
+
+```shell
+k run curlpod --image=radial/busyboxplus:curl -it --rm
+```
+
+From within the container, run the curl command:
+
+```shell
+curl ratings.ratings:9080/ratings/123
+```
+
+Finally, `exit` the container.
+
+
+## Put it all together
+
+Expose BookInfo:
+
+```shell
+k apply -f bookinfo/bookinfo-gateway.yaml
+```
+
+## References
+
+- https://istio.io/latest/docs/ops/deployment/vm-architecture/
+- https://istio.io/latest/docs/setup/install/virtual-machine/
+- https://github.com/tetrateio/training_materials/blob/main/labs/istio/9-vm-workloads.md
+- https://github.com/GoogleCloudPlatform/istio-samples/tree/master/mesh-expansion-gce
