@@ -263,7 +263,7 @@ Grab your load balancer public IP address:
 GATEWAY_IP=$(kubectl get svc -n istio-system istio-ingressgateway -ojsonpath='{.status.loadBalancer.ingress[0].ip}')
 ```
 
-Open a browser and visit the BookInfo product page.  Verify that you can see ratings on the page.
+Open a browser and visit the BookInfo product page (at /productpage).  Verify that you can see ratings on the page.
 
 ```shell
 curl $GATEWAY_IP/productpage
