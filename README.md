@@ -2,9 +2,9 @@
 
 # Add VM to istio mesh in the context of the BookInfo App
 
-This document is a recipe illustrating Istio mesh expansion using a single network and a a single cluster.
+This document is a recipe illustrating Istio mesh expansion using a single network and a single cluster.
 
-We install Istio and deploy the all BookInfo services to the mesh, with the exception of the ratings service, which will run separately on a VM.
+We install Istio and deploy all BookInfo services to the mesh, with the exception of the ratings service, which will run separately on a VM.
 
 The idea is to make this work, and thereby to demonstrate that Istio supports a mesh where some services run in-cluster and some outside it.
 
@@ -86,7 +86,9 @@ gcloud compute firewall-rules create "cluster-pods-to-vm" \
 ## Install Istio
 
 ```shell
-istioctl install --set values.pilot.env.PILOT_ENABLE_WORKLOAD_ENTRY_AUTOREGISTRATION=true --set values.pilot.env.PILOT_ENABLE_WORKLOAD_ENTRY_HEALTHCHECKS=true
+istioctl install \
+  --set values.pilot.env.PILOT_ENABLE_WORKLOAD_ENTRY_AUTOREGISTRATION=true \
+  --set values.pilot.env.PILOT_ENABLE_WORKLOAD_ENTRY_HEALTHCHECKS=true
 ```
 
 ## Deploy BookInfo (sans ratings)
@@ -103,27 +105,29 @@ istioctl install --set values.pilot.env.PILOT_ENABLE_WORKLOAD_ENTRY_AUTOREGISTRA
     k apply -f bookinfo/bookinfo-reviews.yaml
     ```
 
-    Important: the reviews service uses an environment variable named SERVICES_DOMAIN that we use to adjust the ratings app target url to reflect the fact that it resides in a different namespace.
+    Important: the reviews service uses an environment variable named `SERVICES_DOMAIN` that we use to adjust the ratings app target url to reflect the fact that it resides in a different namespace.
 
-1. Deploy the remaining servies.
+1. Deploy the remaining services.
 
     ```shell
     k apply -f bookinfo/bookinfo-rest.yaml
     ```
 
-## Install East-west Gateway and expose Istiod
+## Install east-west gateway and expose Istiod
 
-Control plane traffic between the VM and istiod goes through this gateway.
+Control plane traffic between the VM and istiod goes through this gateway (see [the istio documentation](https://istio.io/latest/docs/ops/deployment/vm-architecture/)).
 
-See [the istio documentation](https://istio.io/latest/docs/ops/deployment/vm-architecture/) for a more complete explanation.
+1. Install the gateway
 
-```shell
-./scripts/gen-eastwest-gateway.sh --single-cluster | istioctl install -y -f -
-```
+    ```shell
+    ./scripts/gen-eastwest-gateway.sh --single-cluster | istioctl install -y -f -
+    ```
 
-```shell
-k apply -n istio-system -f ./expose-istiod.yaml
-```
+1. Expose istiod
+
+    ```shell
+    k apply -n istio-system -f ./expose-istiod.yaml
+    ```
 
 ## Create the ratings namespace and service account
 
@@ -131,6 +135,9 @@ The ratings service running on the VM will map to the ratings namespace in kuber
 
 ```shell
 k create namespace ratings
+```
+
+```shell
 k create serviceaccount bookinfo-ratings -n ratings
 ```
 
@@ -174,7 +181,7 @@ Ssh onto the VM
 gcloud compute ssh ubuntu@my-mesh-vm
 ```
 
-And, on the VM, run the following commands.
+And, on the VM, run the following commands (taken from [here](https://istio.io/latest/docs/setup/install/virtual-machine/#configure-the-virtual-machine)).
 
 ```
 sudo mkdir -p /etc/certs
@@ -192,7 +199,7 @@ sudo chown -R istio-proxy /etc/certs /var/run/secrets /var/lib/istio /etc/istio/
 
 ## Exercise 1
 
-Watch the workload entry get created as a consequence of the VM registering with the mesh
+Watch the WorkloadEntry get created as a consequence of the VM registering with the mesh.
 
 ```shell
 k get workloadentry -n ratings -w
@@ -211,13 +218,15 @@ Notice the workload entry show up in the listing.  This can take up to a minute.
 
 Although the ratings services does not need to call back into the mesh, we can manually test communication from the VM into the mesh.
 
+From the VM, run:
+
 ```shell
 curl details.default.svc:9080/details
 ```
 
 ## Exercise 3
 
-Test communication from a pod to the ratinsg service running on the VM.
+Test communication from a pod to the ratings service running on the VM.
 
 Create a ClusterIP service to front the application:
 
@@ -247,6 +256,15 @@ Expose BookInfo:
 ```shell
 k apply -f bookinfo/bookinfo-gateway.yaml
 ```
+
+Grab your load balancer public IP address:
+
+```shell
+GATEWAY_IP=$(kubectl get svc -n istio-system istio-ingressgateway -ojsonpath='{.status.loadBalancer.ingress[0].ip}')
+```
+
+Open a browser and visit the BookInfo product page.  Verify that you can see ratings on the page.
+
 
 ## References
 
