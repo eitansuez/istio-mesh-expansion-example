@@ -1,0 +1,6 @@
+workloadgroup.yaml
+vm_files/cluster.env
+vm_files/hosts
+vm_files/istio-token
+vm_files/mesh.yaml
+vm_files/root-cert.pem

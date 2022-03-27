@@ -33,7 +33,7 @@ Wait for the machine to be ready.
 1. Copy over the ratings app
 
     ```shell
-    gcloud compute scp -r bookinfo/ratings ubuntu@my-mesh-vm:ratings
+    gcloud compute scp --recurse bookinfo/ratings ubuntu@my-mesh-vm:ratings
     ```
 
 1. ssh onto the VM
@@ -45,7 +45,7 @@ Wait for the machine to be ready.
 1. Install nodejs, the ratings app and start it, test it.
 
     ```shell
-    sudo apt-get install node
+    sudo apt-get install nodejs npm
     ```
 
 1. Install dependencies
@@ -55,17 +55,15 @@ Wait for the machine to be ready.
     npm install
     ```
 
-1. Test the app.
-
-    Post a rating.
+1. Run the app:
 
     ```shell
-    curl -X POST http://localhost:9080/ratings/123 \
-      -H 'Content-Type: application/json' \
-      -d '5'
+    node ratins.js 9080 &
     ```
 
-    Retrieve it.
+1. Test the app.
+
+    Retrieve a rating.
 
     ```shell
     curl http://localhost:9080/ratings/123
@@ -75,7 +73,9 @@ Wait for the machine to be ready.
 
 ```shell
 CLUSTER_POD_CIDR=$(gcloud container clusters describe my-istio-cluster --format=json | jq -r '.clusterIpv4Cidr')
+```
 
+```shell
 gcloud compute firewall-rules create "cluster-pods-to-vm" \
   --source-ranges=$CLUSTER_POD_CIDR \
   --target-tags=mesh-vm \
@@ -126,7 +126,7 @@ Control plane traffic between the VM and istiod goes through this gateway (see [
 1. Expose istiod
 
     ```shell
-    k apply -n istio-system -f ./expose-istiod.yaml
+    k apply -n istio-system -f ./artifacts/expose-istiod.yaml
     ```
 
 ## Create the ratings namespace and service account
@@ -221,7 +221,7 @@ Although the ratings services does not need to call back into the mesh, we can m
 From the VM, run:
 
 ```shell
-curl details.default.svc:9080/details
+curl details.default.svc:9080/details/123
 ```
 
 ## Exercise 3
@@ -265,6 +265,9 @@ GATEWAY_IP=$(kubectl get svc -n istio-system istio-ingressgateway -ojsonpath='{.
 
 Open a browser and visit the BookInfo product page.  Verify that you can see ratings on the page.
 
+```shell
+curl $GATEWAY_IP/productpage
+```
 
 ## References
 
