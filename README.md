@@ -1,6 +1,6 @@
 2022.03.27
 
-# Add VM to istio mesh in the context of the BookInfo App
+# Add VM to Istio mesh in the context of the BookInfo App
 
 This document is a recipe illustrating Istio mesh expansion using a single network and a single cluster.
 
@@ -115,7 +115,7 @@ istioctl install \
 
 ## Install east-west gateway and expose Istiod
 
-Control plane traffic between the VM and istiod goes through this gateway (see [the istio documentation](https://istio.io/latest/docs/ops/deployment/vm-architecture/)).
+Control plane traffic between the VM and istiod goes through this gateway (see [the Istio documentation](https://istio.io/latest/docs/ops/deployment/vm-architecture/)).
 
 1. Install the gateway
 
@@ -273,5 +273,4 @@ curl $GATEWAY_IP/productpage
 
 - https://istio.io/latest/docs/ops/deployment/vm-architecture/
 - https://istio.io/latest/docs/setup/install/virtual-machine/
-- https://github.com/tetrateio/training_materials/blob/main/labs/istio/9-vm-workloads.md
 - https://github.com/GoogleCloudPlatform/istio-samples/tree/master/mesh-expansion-gce
